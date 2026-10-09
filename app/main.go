@@ -1,8 +1,13 @@
 package main
 
 import (
+	"bufio"
+	"compress/zlib"
 	"fmt"
+	"io"
+	"log"
 	"os"
+	"path/filepath"
 )
 
 // Usage: your_program.sh <command> <arg1> <arg2> ...
@@ -30,6 +35,27 @@ func main() {
 		}
 
 		fmt.Println("Initialized git directory")
+
+	case "cat-file":
+
+		blob := os.Args[3]
+		filename := filepath.Join(".git", "objects", blob[:2], blob[2:])
+		file, err := os.Open(filename) // compressed bytes
+		if err != nil {
+			log.Fatal(err)
+		}
+		zr, err := zlib.NewReader(file)
+		defer zr.Close()
+
+		br := bufio.NewReader(zr)
+
+		if _, err := br.ReadString(0); err != nil {
+			log.Fatal(err)
+		}
+
+		if _, err := io.Copy(os.Stdout, br); err != nil {
+			log.Fatal(err)
+		}
 
 	default:
 		fmt.Fprintf(os.Stderr, "Unknown command %s\n", command)
