@@ -11,7 +11,16 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"strings"
 )
+
+var modeNames = map[string]string{
+	"40000":  "tree",
+	"100644": "blob",
+	"100755": "blob",
+	"120000": "blob",
+	"160000": "commit",
+}
 
 // Usage: your_program.sh <command> <arg1> <arg2> ...
 func main() {
@@ -88,6 +97,47 @@ func main() {
 		zw.Close()
 
 		fmt.Println(sha)
+
+	case "ls-tree":
+
+		tree := os.Args[3]
+		filename := filepath.Join(".git", "objects", tree[:2], tree[2:])
+		file, err := os.Open(filename)
+		if err != nil {
+			log.Fatal(err)
+		}
+		zr, err := zlib.NewReader(file)
+		defer zr.Close()
+
+		br := bufio.NewReader(zr)
+
+		if _, err := br.ReadString(0); err != nil {
+			log.Fatal(err)
+		}
+
+		for {
+			s, err := br.ReadString(0)
+			if err == io.EOF {
+				break
+			}
+			if err != nil {
+				log.Fatal(err)
+			}
+
+			_, name, _ := strings.Cut(strings.TrimSuffix(s, "\x00"), " ")
+
+			var sha [20]byte
+			if _, err := io.ReadFull(br, sha[:]); err != nil {
+				log.Fatal(err)
+			}
+
+			fmt.Println(name)
+			// modeType, ok := modeNames[mode]
+			// if !ok {
+			// 	modeType = "unk"
+			// }
+			// fmt.Println(mode, modeType, name, hex.EncodeToString(sha[:]))
+		}
 
 	default:
 		fmt.Fprintf(os.Stderr, "Unknown command %s\n", command)
