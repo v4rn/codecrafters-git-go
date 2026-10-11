@@ -3,10 +3,13 @@ package main
 import (
 	"bufio"
 	"compress/zlib"
+	"crypto/sha1"
+	"encoding/hex"
 	"fmt"
 	"io"
 	"log"
 	"os"
+	"path"
 	"path/filepath"
 )
 
@@ -56,6 +59,35 @@ func main() {
 		if _, err := io.Copy(os.Stdout, br); err != nil {
 			log.Fatal(err)
 		}
+
+	case "hash-object":
+
+		// build blob contents and create a sha1
+		filename := os.Args[3]
+		contents, err := os.ReadFile(filename)
+		if err != nil {
+			log.Fatal(err)
+		}
+		header := fmt.Sprintf("blob %d\x00", len(contents))
+		blob := append([]byte(header), contents...)
+
+		sum := sha1.Sum(blob)
+		sha := hex.EncodeToString(sum[:])
+
+		// build the blob object file
+		blob_path := path.Join(".git", "objects", sha[:2])
+		if err := os.MkdirAll(blob_path, 0775); err != nil {
+			log.Fatal(err)
+		}
+		file, err := os.Create(path.Join(blob_path, sha[2:]))
+		if err != nil {
+			log.Fatal(err)
+		}
+		zw := zlib.NewWriter(file)
+		zw.Write(blob)
+		zw.Close()
+
+		fmt.Println(sha)
 
 	default:
 		fmt.Fprintf(os.Stderr, "Unknown command %s\n", command)
