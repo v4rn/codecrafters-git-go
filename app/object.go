@@ -5,13 +5,14 @@ import (
 	"compress/zlib"
 	"crypto/sha1"
 	"encoding/hex"
-	"fmt"
 	"io"
-	"log"
 	"os"
-	"path"
 	"path/filepath"
 )
+
+type repo struct {
+	root string // directory containing .git
+}
 
 type object struct {
 	br      *bufio.Reader
@@ -24,8 +25,18 @@ func (o *object) Close() {
 	}
 }
 
-func readObject(sha string) (*object, error) {
-	f, err := os.Open(filepath.Join(".git", "objects", sha[:2], sha[2:]))
+func (r *repo) gitDir() string { return filepath.Join(r.root, ".git") }
+
+func (r *repo) objectPath(sha string) string {
+	return filepath.Join(r.gitDir(), "objects", sha[:2], sha[2:])
+}
+
+func (r *repo) objectDir(sha string) string {
+	return filepath.Join(r.gitDir(), "objects", sha[:2])
+}
+
+func (r *repo) readObject(sha string) (*object, error) {
+	f, err := os.Open(r.objectPath(sha))
 	if err != nil {
 		return nil, err
 	}
@@ -45,26 +56,29 @@ func readObject(sha string) (*object, error) {
 	return &object{br, []io.Closer{zr, f}}, nil
 }
 
-func writeObject(contents []byte) string {
+func (r *repo) writeObject(contents []byte) (string, error) {
 
-	header := fmt.Sprintf("blob %d\x00", len(contents))
-	blob := append([]byte(header), contents...)
-
-	sum := sha1.Sum(blob)
+	sum := sha1.Sum(contents)
 	sha := hex.EncodeToString(sum[:])
 
-	// build the blob object file
-	blob_path := path.Join(".git", "objects", sha[:2])
-	if err := os.MkdirAll(blob_path, 0775); err != nil {
-		log.Fatal(err)
+	if err := os.MkdirAll(r.objectDir(sha), 0775); err != nil {
+		return "", err
 	}
-	file, err := os.Create(path.Join(blob_path, sha[2:]))
+	file, err := os.Create(r.objectPath(sha))
 	if err != nil {
-		log.Fatal(err)
+		return "", err
 	}
 	zw := zlib.NewWriter(file)
-	zw.Write(blob)
-	zw.Close()
-
-	return sha
+	if _, err := zw.Write(contents); err != nil {
+		file.Close()
+		return "", err
+	}
+	if err := zw.Close(); err != nil {
+		file.Close()
+		return "", err
+	}
+	if err := file.Close(); err != nil {
+		return "", err
+	}
+	return sha, nil
 }

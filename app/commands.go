@@ -2,11 +2,10 @@ package main
 
 import (
 	"encoding/hex"
-	"flag"
 	"fmt"
 	"io"
-	"log"
 	"os"
+	"path"
 	"strings"
 )
 
@@ -15,62 +14,107 @@ var modeNames = map[string]string{
 	"100644": "blob",
 }
 
-func initRepo(args []string) error {
-	for _, dir := range []string{".git", ".git/objects", ".git/refs"} {
+func (r *repo) initRepo(w io.Writer) error {
+	for _, dir := range []string{
+		r.gitDir(),
+		path.Join(r.gitDir(), "objects"),
+		path.Join(r.gitDir(), "refs"),
+	} {
 		if err := os.MkdirAll(dir, 0755); err != nil {
-			fmt.Fprintf(os.Stderr, "Error creating directory: %s\n", err)
+			return err
 		}
 	}
 
 	headFileContents := []byte("ref: refs/heads/main\n")
-	if err := os.WriteFile(".git/HEAD", headFileContents, 0644); err != nil {
-		fmt.Fprintf(os.Stderr, "Error writing file: %s\n", err)
+	if err := os.WriteFile(
+		path.Join(r.gitDir(), "HEAD"), headFileContents, 0644); err != nil {
+		return err
 	}
 
-	fmt.Println("Initialized git directory")
+	fmt.Fprintln(w, "Initialized git directory")
 	return nil
 }
 
-func catFile(args []string) error {
-	fs := flag.NewFlagSet("cat-file", flag.ExitOnError)
-	_ = fs.Bool("p", true, "pretty-print object contents")
-	fs.Parse(args)
-
-	object, err := readObject(fs.Arg(0))
+func (r *repo) catFile(w io.Writer, objectSha string) error {
+	object, err := r.readObject(objectSha)
 	if err != nil {
-		log.Fatal(err)
+		return err
 	}
+	defer object.Close()
 
-	if _, err := io.Copy(os.Stdout, object.br); err != nil {
-		log.Fatal(err)
+	if _, err := io.Copy(w, object.br); err != nil {
+		return err
 	}
-	object.Close()
 	return nil
 }
 
-func hashObject(args []string) error {
-	fs := flag.NewFlagSet("hash-object", flag.ExitOnError)
-	_ = fs.Bool("w", true, "write the contents")
-	fs.Parse(args)
-
-	contents, err := os.ReadFile(fs.Arg(0))
+func (r *repo) hashBlob(filename string) (string, error) {
+	fileContents, err := os.ReadFile(filename)
 	if err != nil {
-		log.Fatal(err)
+		return "", err
 	}
-	sha := writeObject(contents)
-	fmt.Println(sha)
+
+	header := fmt.Sprintf("blob %d\x00", len(fileContents))
+	contents := append([]byte(header), fileContents...)
+
+	return r.writeObject(contents)
+}
+
+func (r *repo) hashTree(fpath string) (string, error) {
+	dirContents, err := os.ReadDir(fpath)
+	if err != nil {
+		return "", err
+	}
+	var treeFileContents []byte
+	for _, content := range dirContents {
+		if content.Name() == ".git" {
+			continue
+		}
+
+		var line []byte
+		var sha string
+		var header string
+		var err error
+
+		if content.IsDir() {
+			sha, err = r.hashTree(path.Join(fpath, content.Name()))
+			if err != nil {
+				return "", err
+			}
+			header = fmt.Sprintf("40000 %s\x00", content.Name())
+		} else {
+			sha, err = r.hashBlob(path.Join(fpath, content.Name()))
+			if err != nil {
+				return "", err
+			}
+			header = fmt.Sprintf("100644 %s\x00", content.Name())
+		}
+
+		byte_sha, _ := hex.DecodeString(sha)
+		line = append([]byte(header), byte_sha...)
+		treeFileContents = append(treeFileContents, line...)
+	}
+	header := fmt.Sprintf("tree %d\x00", len(treeFileContents))
+	treeFileContents = append([]byte(header), treeFileContents...)
+
+	return r.writeObject((treeFileContents))
+}
+
+func (r *repo) hashObject(w io.Writer, filename string) error {
+	sha, err := r.hashBlob(filename)
+	if err != nil {
+		return err
+	}
+	fmt.Fprintln(w, sha)
 	return nil
 }
 
-func lsTree(args []string) error {
-	fs := flag.NewFlagSet("ls-tree", flag.ExitOnError)
-	nameOnly := fs.Bool("name-only", false, "print only names")
-	fs.Parse(args)
-
-	object, err := readObject(fs.Arg(0))
+func (r *repo) lsTree(w io.Writer, treeObjectSha string, nameOnlyFormat bool) error {
+	object, err := r.readObject(treeObjectSha)
 	if err != nil {
-		log.Fatal(err)
+		return err
 	}
+	defer object.Close()
 
 	for {
 		s, err := object.br.ReadString(0)
@@ -78,29 +122,37 @@ func lsTree(args []string) error {
 			break
 		}
 		if err != nil {
-			log.Fatal(err)
+			return err
 		}
 
 		mode, name, found := strings.Cut(strings.TrimSuffix(s, "\x00"), " ")
 		if !found {
-			log.Fatal("Corrupt tree object")
+			return fmt.Errorf("corrupt tree object")
 		}
 
 		var sha [20]byte
 		if _, err := io.ReadFull(object.br, sha[:]); err != nil {
-			log.Fatal(err)
+			return err
 		}
 
 		modeType, ok := modeNames[mode]
 		if !ok {
 			modeType = "unk"
 		}
-		if *nameOnly {
-			fmt.Println(name)
+		if nameOnlyFormat {
+			fmt.Fprintln(w, name)
 		} else {
-			fmt.Println(mode, modeType, name, hex.EncodeToString(sha[:]))
+			fmt.Fprintln(w, mode, modeType, name, hex.EncodeToString(sha[:]))
 		}
 	}
-	object.Close()
+	return nil
+}
+
+func (r *repo) writeTree(w io.Writer) error {
+	sha, err := r.hashTree(".")
+	if err != nil {
+		return err
+	}
+	fmt.Fprintln(w, sha)
 	return nil
 }
