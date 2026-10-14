@@ -156,3 +156,30 @@ func (r *repo) writeTree(w io.Writer) error {
 	fmt.Fprintln(w, sha)
 	return nil
 }
+
+func (r *repo) commitTree(
+	w io.Writer,
+	treeObjectSha string,
+	commitSha string,
+	message string,
+) error {
+
+	contents := fmt.Sprintf("tree %s\n", treeObjectSha)
+	if commitSha != "" {
+		contents += fmt.Sprintf("parent %s\n", commitSha)
+	}
+	contents += "author John Doe <john@example.com> 1234567890 +0000\n"
+	contents += "committer John Doe <john@example.com> 1234567890 +0000\n"
+	contents += "\n"
+	contents += message
+
+	contents = fmt.Sprintf("commit %d\x00%s", len(contents), contents)
+
+	sha, err := r.writeObject([]byte(contents))
+	if err != nil {
+		return err
+	}
+
+	fmt.Fprintln(w, sha)
+	return nil
+}

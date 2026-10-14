@@ -43,7 +43,22 @@ func main() {
 		err = r.lsTree(os.Stdout, fs.Arg(0), *nameOnly)
 
 	case "write-tree":
-		r.writeTree(os.Stdout)
+		err = r.writeTree(os.Stdout)
+
+	case "commit-tree":
+		fs := flag.NewFlagSet("commit-tree", flag.ExitOnError)
+		commitSha := fs.String("p", "", "commit sha")
+		message := fs.String("m", "", "commit message")
+
+		treeSha := os.Args[2]
+		fs.Parse(os.Args[3:])
+
+		if *message == "" {
+			fs.Usage()
+			os.Exit(1)
+		}
+
+		err = r.commitTree(os.Stdout, treeSha, *commitSha, *message)
 
 	default:
 		fmt.Fprintf(os.Stderr, "Unknown command %s\n", os.Args[1])
