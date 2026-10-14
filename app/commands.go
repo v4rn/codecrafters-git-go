@@ -171,7 +171,7 @@ func (r *repo) commitTree(
 	contents += "author John Doe <john@example.com> 1234567890 +0000\n"
 	contents += "committer John Doe <john@example.com> 1234567890 +0000\n"
 	contents += "\n"
-	contents += message
+	contents += message + "\n"
 
 	contents = fmt.Sprintf("commit %d\x00%s", len(contents), contents)
 
